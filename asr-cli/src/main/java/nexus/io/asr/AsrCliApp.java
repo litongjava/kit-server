@@ -8,9 +8,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.alibaba.fastjson2.JSON;
+
 import nexus.io.gitee.GiteeClient;
 import nexus.io.gitee.GiteeConst;
+import nexus.io.gitee.GiteeDocumentOutput;
 import nexus.io.gitee.GiteeModels;
+import nexus.io.gitee.GiteeTaskResponse;
 import nexus.io.model.http.response.ResponseVo;
 import nexus.io.openai.whisper.WhisperResponseFormat;
 import nexus.io.openai.whisper.WhisperTranscriptionsRequest;
@@ -39,13 +43,19 @@ public class AsrCliApp {
       EnvUtils.load(args);
       applyEnvOverrides(options);
       validate(options);
-      ResponseVo response = transcribe(options);
-      String body = response.getBodyString();
+      String body;
+      if (Boolean.TRUE.equals(options.async)) {
+        body = transcribeAsync(options);
+      } else {
+        ResponseVo response = transcribe(options);
+        body = response.getBodyString();
 
-      if (!response.isOk()) {
-        System.err.println("Transcription failed, status code: " + response.getCode());
-        System.err.println(body);
-        return 2;
+        if (!response.isOk()) {
+          System.err.println("Transcription failed, status code: " + response.getCode());
+          System.err.println(body);
+          return 2;
+        }
+        body = extractTranscriptionText(body);
       }
 
       if (options.outputFile == null) {
@@ -79,10 +89,72 @@ public class AsrCliApp {
     request.setFile(options.inputFile);
     request.setModel(options.model);
     request.setResponse_format(options.responseFormat);
+    request.setLanguage(options.language);
     request.setPrompt(options.prompt);
     request.setTemperature(options.temperature);
     request.setStream(options.stream);
     return GiteeClient.transcriptions(options.inputFile, request);
+  }
+
+  private static String extractTranscriptionText(String body) {
+    return JSON.parseObject(body).getString("text");
+  }
+
+  private static String transcribeAsync(CliOptions options) throws InterruptedException {
+    WhisperTranscriptionsRequest request = new WhisperTranscriptionsRequest();
+    request.setFile(options.inputFile);
+    request.setModel(options.model);
+    request.setResponse_format(options.responseFormat);
+    request.setLanguage(options.language);
+    request.setPrompt(options.prompt);
+    request.setTemperature(options.temperature);
+    request.setStream(options.stream);
+
+    GiteeTaskResponse current = GiteeClient.asyncAudioTranscriptions(options.inputFile, request);
+    GiteeClient client = new GiteeClient(EnvUtils.get(GiteeConst.GITEE_API_KEY),
+        EnvUtils.get(GiteeConst.GITEE_API_URL_KEY, GiteeConst.API_PREFIX_URL).replaceFirst("/v1$", ""));
+    long deadline = System.currentTimeMillis() + options.asyncTimeoutSeconds * 1000L;
+    while (System.currentTimeMillis() < deadline) {
+      String status = current.getStatus();
+      if (isTerminalSuccess(status)) {
+        return extractAsyncText(current);
+      }
+      if (isTerminalFailure(status)) {
+        throw new IllegalStateException("Async transcription failed, status: " + status);
+      }
+      if (current.getTask_id() == null) {
+        throw new IllegalStateException("Async transcription did not return task_id.");
+      }
+      Thread.sleep(options.pollIntervalSeconds * 1000L);
+      current = client.getTask(current.getTask_id());
+    }
+    throw new IllegalStateException("Async transcription timed out, task_id: " + current.getTask_id());
+  }
+
+  private static String extractAsyncText(GiteeTaskResponse task) {
+    GiteeDocumentOutput output = task.getOutput();
+    if (output != null) {
+      if (output.getText() != null) {
+        return output.getText();
+      }
+      if (output.getContent() != null) {
+        return output.getContent();
+      }
+      if (output.getText_result() != null) {
+        return output.getText_result();
+      }
+    }
+    return "";
+  }
+
+  private static boolean isTerminalSuccess(String status) {
+    return "success".equalsIgnoreCase(status) || "succeeded".equalsIgnoreCase(status) || "completed".equalsIgnoreCase(status)
+        || "finished".equalsIgnoreCase(status);
+  }
+
+  private static boolean isTerminalFailure(String status) {
+    return "failed".equalsIgnoreCase(status) || "error".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status)
+        || "canceled".equalsIgnoreCase(status);
   }
 
   private static void applyEnvOverrides(CliOptions options) {
@@ -123,9 +195,13 @@ public class AsrCliApp {
           -o, --output <file>         Save transcription to a file. Prints to stdout when omitted.
           -m, --model <model>         ASR model. Default: whisper-large-v3.
           -f, --format <format>       text, json, verbose_json, srt, or vtt. Default: text.
+          -l, --language <lang>       Optional language code, e.g. zh.
           -p, --prompt <text>         Optional prompt to guide transcription.
           -t, --temperature <number>  Optional sampling temperature.
               --stream <true|false>   Optional stream flag passed to the API.
+              --async <true|false>    Use Gitee async audio transcription endpoint.
+              --poll-interval <sec>   Async polling interval. Default: 5.
+              --async-timeout <sec>   Async timeout. Default: 1800.
               --api-key <key>         Override GITEE_API_KEY from environment/config.
               --base-url <url>        Override GITEE_API_URL from environment/config.
           -h, --help                  Show this help.
@@ -145,9 +221,13 @@ public class AsrCliApp {
     private File outputFile;
     private String model = DEFAULT_MODEL;
     private String responseFormat = DEFAULT_RESPONSE_FORMAT;
+    private String language;
     private String prompt;
     private Float temperature;
     private Boolean stream;
+    private Boolean async;
+    private int pollIntervalSeconds = 5;
+    private int asyncTimeoutSeconds = 1800;
     private String apiKey;
     private String baseUrl;
     private boolean help;
@@ -181,6 +261,10 @@ public class AsrCliApp {
         case "--response-format":
           options.responseFormat = requireValue(args, ++i, arg);
           break;
+        case "-l":
+        case "--language":
+          options.language = requireValue(args, ++i, arg);
+          break;
         case "-p":
         case "--prompt":
           options.prompt = requireValue(args, ++i, arg);
@@ -191,6 +275,15 @@ public class AsrCliApp {
           break;
         case "--stream":
           options.stream = parseBoolean(requireValue(args, ++i, arg), arg);
+          break;
+        case "--async":
+          options.async = parseBoolean(requireValue(args, ++i, arg), arg);
+          break;
+        case "--poll-interval":
+          options.pollIntervalSeconds = parsePositiveInt(requireValue(args, ++i, arg), arg);
+          break;
+        case "--async-timeout":
+          options.asyncTimeoutSeconds = parsePositiveInt(requireValue(args, ++i, arg), arg);
           break;
         case "--api-key":
           options.apiKey = requireValue(args, ++i, arg);
@@ -268,6 +361,17 @@ public class AsrCliApp {
         return Boolean.FALSE;
       }
       throw new IllegalArgumentException("Invalid boolean for " + optionName + ": " + value);
+    }
+
+    private static int parsePositiveInt(String value, String optionName) {
+      try {
+        int result = Integer.parseInt(value);
+        if (result > 0) {
+          return result;
+        }
+      } catch (NumberFormatException ignored) {
+      }
+      throw new IllegalArgumentException("Invalid positive integer for " + optionName + ": " + value);
     }
   }
 }

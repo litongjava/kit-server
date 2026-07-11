@@ -21,6 +21,7 @@ whisper-large-v3-turbo
 whisper-large
 GLM-ASR
 FunASR
+Fun-ASR-Nano-2512
 whisper-large-v3
 whisper-base
 ```
@@ -74,7 +75,7 @@ asr --model whisper-large-v3-turbo -i "C:/path/to/audio.mp3" -o "C:/path/to/audi
 Use FunASR for Chinese audio:
 
 ```powershell
-asr --model FunASR -i "C:/path/to/audio.mp3" -o "C:/path/to/audio.txt" --prompt "Chinese conversation recording. Transcribe only the speech you hear."
+asr --model Fun-ASR-Nano-2512 --language zh -i "C:/path/to/audio.mp3" -o "C:/path/to/audio.txt"
 ```
 
 Generate SRT subtitles:
@@ -128,6 +129,7 @@ Argument file rules:
 -o, --output <file>         output file path; stdout is used when omitted
 -m, --model <model>         ASR model; default is whisper-large-v3
 -f, --format <format>       text/json/verbose_json/srt/vtt; default is text
+-l, --language <lang>       optional language code, e.g. zh
 -p, --prompt <text>         optional transcription prompt
 -t, --temperature <number>  optional sampling temperature
     --stream <true|false>   optional stream flag
