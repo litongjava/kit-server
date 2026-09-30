@@ -6,5 +6,6 @@
   <packaging>pom</packaging>
   <modules>
   	<module>asr-cli</module>
+  	<module>ocr-cli</module>
   </modules>
 </project>
