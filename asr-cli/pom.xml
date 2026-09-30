@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>nexus.io</groupId>
-    <artifactId>kit-server</artifactId>
+    <artifactId>ai-tools</artifactId>
     <version>1.0.0</version>
   </parent>
   <artifactId>asr-cli</artifactId>
@@ -44,7 +44,7 @@
               <goal>shade</goal>
             </goals>
             <configuration>
-              <finalName>${project.artifactId}-${project.version}-cli</finalName>
+              <finalName>${project.artifactId}</finalName>
               <createDependencyReducedPom>false</createDependencyReducedPom>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
@@ -87,7 +87,7 @@
                   <executable>cmd</executable>
                   <arguments>
                     <argument>/c</argument>
-                    <argument>call "${msvc.vcvarsall}" amd64 &amp;&amp; "${graalvm.home}\bin\native-image.cmd" --no-fallback --enable-url-protocols=http,https --report-unsupported-elements-at-runtime -H:+ReportExceptionStackTraces -H:CCompilerPath="${msvc.cl.exe}" -jar "${project.build.directory}\${project.artifactId}-${project.version}-cli.jar" "${project.build.directory}\asr"</argument>
+                    <argument>call "${msvc.vcvarsall}" amd64 &amp;&amp; "${graalvm.home}\bin\native-image.cmd" --no-fallback --enable-url-protocols=http,https --report-unsupported-elements-at-runtime -H:+ReportExceptionStackTraces -H:CCompilerPath="${msvc.cl.exe}" -jar "${project.build.directory}\${project.artifactId}.jar" "${project.build.directory}\asr"</argument>
                   </arguments>
                 </configuration>
               </execution>

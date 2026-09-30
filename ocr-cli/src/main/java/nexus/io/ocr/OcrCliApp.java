@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import nexus.io.gitee.GiteeClient;
 import nexus.io.gitee.GiteeConst;
@@ -23,6 +24,11 @@ public class OcrCliApp {
 
   private static final String DEFAULT_MODEL = GiteeModels.PADDLEOCR_VL;
   private static final String DEFAULT_FORMAT = "markdown";
+
+  /**
+   * 模型别名：对外仍可使用稳定模型名，内部自动定向到当前可用的模型版本。 平台侧停用或改名时，只需要调整这里的映射。
+   */
+  private static final Map<String, String> MODEL_ALIASES = Map.of(GiteeModels.PADDLEOCR_VL, GiteeModels.PADDLEOCR_VL_1_5);
 
   public static void main(String[] args) {
     int exitCode = run(args);
@@ -46,16 +52,26 @@ public class OcrCliApp {
       GiteeTaskResponse task = parseAndWait(options);
       String body = render(task, options.format);
 
-      if (options.outputFile == null) {
+      Path inputDir = resolveInputDir(options);
+      Path outputPath = options.outputFile == null ? null : resolveOutputPath(options);
+
+      if (isImageExtractionFormat(options.format)) {
+        Path imageDir = inputDir.resolve(DocumentImageExtractor.DEFAULT_IMAGE_DIR);
+        Path linkBaseDir = outputPath == null ? inputDir : parentOf(outputPath, inputDir);
+        DocumentImageExtractor.Result extracted = DocumentImageExtractor.extract(body, imageDir, linkBaseDir,
+            resolveImagePrefix(options));
+        body = extracted.getContent();
+        if (extracted.getImageCount() > 0) {
+          System.out.println("Extracted " + extracted.getImageCount() + " image(s) to: " + imageDir);
+        }
+      }
+
+      if (outputPath == null) {
         System.out.println(body);
       } else {
-        Path outputPath = options.outputFile.toPath();
-        Path parent = outputPath.getParent();
-        if (parent != null) {
-          Files.createDirectories(parent);
-        }
+        Files.createDirectories(parentOf(outputPath, inputDir));
         Files.writeString(outputPath, body, StandardCharsets.UTF_8);
-        System.out.println("OCR result saved to: " + outputPath.toAbsolutePath());
+        System.out.println("OCR result saved to: " + outputPath);
       }
       return 0;
     } catch (IllegalArgumentException e) {
@@ -72,10 +88,60 @@ public class OcrCliApp {
     }
   }
 
+  /**
+   * 解析实际发送给接口的模型名。对外保持稳定模型名，内部自动定向到当前可用版本。
+   */
+  private static String resolveModel(String model) {
+    if (model == null) {
+      return null;
+    }
+    String target = MODEL_ALIASES.get(model.trim());
+    return target != null ? target : model;
+  }
+
+  /** markdown 和 text 会把内联图片落盘；json 保留原始响应，便于排查。 */
+  private static boolean isImageExtractionFormat(String format) {
+    return "markdown".equalsIgnoreCase(format) || "text".equalsIgnoreCase(format);
+  }
+
+  /** 输入文件所在目录，所有输出都相对它定位；输入是裸文件名时就是当前工作目录。 */
+  private static Path resolveInputDir(CliOptions options) {
+    return parentOf(options.inputFile.toPath().toAbsolutePath(), Path.of("").toAbsolutePath());
+  }
+
+  /**
+   * 结果文件路径。相对路径按输入文件所在目录解析，绝对路径原样使用。
+   */
+  private static Path resolveOutputPath(CliOptions options) {
+    Path outputPath = options.outputFile.toPath();
+    if (outputPath.isAbsolute()) {
+      return outputPath.normalize();
+    }
+    return resolveInputDir(options).resolve(outputPath).normalize();
+  }
+
+  private static Path parentOf(Path path, Path fallback) {
+    Path parent = path.toAbsolutePath().normalize().getParent();
+    return parent != null ? parent : fallback;
+  }
+
+  /** 图片文件名前缀，取结果文件主文件名；没有输出文件时取输入文件主文件名。 */
+  private static String resolveImagePrefix(CliOptions options) {
+    if (options.outputFile != null) {
+      return stripExtension(options.outputFile.getName());
+    }
+    return stripExtension(options.inputFile.getName());
+  }
+
+  private static String stripExtension(String filename) {
+    int index = filename.lastIndexOf('.');
+    return index > 0 ? filename.substring(0, index) : filename;
+  }
+
   private static GiteeTaskResponse parseAndWait(CliOptions options) throws InterruptedException {
     GiteeClient client = new GiteeClient();
     GiteeDocumentParseRequest request = new GiteeDocumentParseRequest();
-    request.setModel(options.model);
+    request.setModel(resolveModel(options.model));
     request.setInclude_image(options.includeImage);
     request.setInclude_image_base64(options.includeImageBase64);
     request.setEnd_pages(options.endPages);
@@ -196,6 +262,12 @@ public class OcrCliApp {
               --api-key <key>         Override GITEE_API_KEY from environment/config.
               --base-url <url>        Override GITEE API base URL.
           -h, --help                  Show this help.
+
+        Notes:
+          PaddleOCR-VL is the public model name and is routed to PaddleOCR-VL-1.5 internally.
+          Output is anchored to the input file directory: a relative -o path resolves against it,
+          and inline base64 images go to its document_images directory. Image references are
+          replaced with paths relative to the result file.
 
         Examples:
           ocr-cli -i document.pdf -o document.md

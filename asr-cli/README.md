@@ -2,6 +2,8 @@
 
 `asr-cli` 是一个基于 Gitee ASR 接口的命令行工具，用于将 mp3 等音频文件转写为文本或字幕文件。
 
+Agent skill：[`.agents/skills/asr-cli/SKILL.md`](../.agents/skills/asr-cli/SKILL.md)。
+
 默认模型：
 
 ```text
@@ -23,11 +25,11 @@ vtt
 本模块可以编译出两种命令形式：
 
 ```text
-asr-cli/target/asr-cli-1.0.0-cli.jar
+asr-cli/target/asr-cli.jar
 asr-cli/target/asr.exe
 ```
 
-`asr-cli-1.0.0-cli.jar` 需要 JVM 运行。
+`asr-cli.jar` 需要 JVM 运行。
 
 `asr.exe` 是 GraalVM Native Image 编译出的 Windows 原生命令，不需要额外启动 JVM。
 
@@ -61,13 +63,13 @@ mvn -q -pl asr-cli -am package -DskipTests
 输出：
 
 ```text
-asr-cli/target/asr-cli-1.0.0-cli.jar
+asr-cli/target/asr-cli.jar
 ```
 
 验证：
 
 ```powershell
-java -jar asr-cli/target/asr-cli-1.0.0-cli.jar --help
+java -jar asr-cli/target/asr-cli.jar --help
 ```
 
 ## 编译 Native 命令
@@ -190,12 +192,35 @@ asr @asr-args.txt
 -o, --output <file>         输出文件路径；不指定时输出到 stdout
 -m, --model <model>         ASR 模型，默认 whisper-large-v3
 -f, --format <format>       text/json/verbose_json/srt/vtt，默认 text
+                            --response-format 是同一个参数的别名
+-l, --language <lang>       可选语言代码，例如 zh
 -p, --prompt <text>         可选提示词
 -t, --temperature <number>  可选采样温度
     --stream <true|false>   可选 stream 参数
+    --async <true|false>    使用异步音频转写接口
+    --poll-interval <sec>   异步轮询间隔，默认 5
+    --async-timeout <sec>   异步超时时间，默认 1800
     --api-key <key>         覆盖配置中的 GITEE_API_KEY
     --base-url <url>        覆盖配置中的 GITEE_API_URL
 -h, --help                  显示帮助
+```
+
+## 退出码
+
+```text
+0  成功
+1  参数错误，或结果文件写入失败
+2  转写请求或远端任务失败
+```
+
+同步请求失败时会先打印 `Transcription failed, status code: <code>` 和原始响应体，再以 `2` 退出。
+
+## 异步转写
+
+音频较长时可用 `--async true` 走异步接口，CLI 会提交任务并按 `--poll-interval` 轮询，直到 `--async-timeout` 超时：
+
+```powershell
+asr --async true --poll-interval 10 --async-timeout 3600 -i "C:/path/to/audio.mp3" -o "C:/path/to/audio.txt"
 ```
 
 ## 常见问题

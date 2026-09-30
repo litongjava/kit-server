@@ -212,7 +212,7 @@ public class AsrCliApp {
           asr @asr-args.txt
 
         Maven jar:
-          java -jar asr-cli-1.0.0-cli.jar [options] <audio-file>
+          java -jar asr-cli.jar [options] <audio-file>
         """);
   }
 

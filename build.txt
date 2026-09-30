@@ -1,0 +1,2 @@
+[win.build]
+mvn package -DskipTests
